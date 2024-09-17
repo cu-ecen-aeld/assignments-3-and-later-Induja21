@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 # This script prints the info on number of files and number of matching lines in the corresponding file directories
 # Author: Induja Narayanan <Induja.Narayanan@colorado.edu>
 
