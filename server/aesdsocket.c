@@ -232,7 +232,7 @@ int main(int argc, char **argv)
 
     /*Line  was partly referred from https://beej.us/guide/bgnet/html/#socket */
     memset(&inputs,0,sizeof(inputs));
-    inputs.ai_family = AF_INET;     // don't care IPv4 or IPv6
+    inputs.ai_family = AF_UNSPEC;     // IPv4 or IPv6
     inputs.ai_socktype = SOCK_STREAM; // TCP stream sockets
     inputs.ai_flags = AI_PASSIVE;     // fill in my IP for me
 
@@ -317,7 +317,15 @@ int main(int argc, char **argv)
         }
 
         //Convert binary IP address from binary to human readable format
-        inet_ntop(AF_INET, &(((struct sockaddr_in *)&client_addr)->sin_addr), client_ip, sizeof(client_ip));
+        
+	if (client_addr.ss_family == AF_INET) { // Check if the address is IPv4
+    		struct sockaddr_in *addr_in = (struct sockaddr_in *)&client_addr;
+    		inet_ntop(AF_INET, &(addr_in->sin_addr), client_ip, sizeof(client_ip));
+	} else if (client_addr.ss_family == AF_INET6) { // Check if the address is IPv6
+    		struct sockaddr_in6 *addr_in6 = (struct sockaddr_in6 *)&client_addr;
+    		inet_ntop(AF_INET6, &(addr_in6->sin6_addr), client_ip, sizeof(client_ip));
+	}
+	
         // Log the client ip
         syslog(LOG_INFO, "Accepted connection from %s",client_ip);
 
