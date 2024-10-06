@@ -135,35 +135,37 @@ int receive_and_store_socket_data(int client_fd,int file_fd)
     size_t multiplication_factor=1;
 
     //Dynamically allocate 1024 bytes of memory
-    client_buffer = (char *)malloc(CLIENT_BUFFER_LEN+1);
-    if(client_buffer == NULL)
+    //realloc_buffer = (char *)malloc(CLIENT_BUFFER_LEN+1);
+    realloc_buffer = (char *)calloc(CLIENT_BUFFER_LEN + 1, sizeof(char));
+    if(realloc_buffer == NULL)
     {
         syslog(LOG_INFO, "Client buffer was not allocated hence returning with error");
         return -1;
     }
 
-    realloc_buffer = client_buffer;
+    client_buffer = realloc_buffer;
 
     while((received_no_of_bytes=recv(client_fd,realloc_buffer,bytes_to_receive,0))>0)
     {
         //Update the total byte received
-        start_pos+=bytes_to_receive;
+        start_pos+=received_no_of_bytes;
         //Check if newline is found
         end_of_line = strchr(client_buffer,'\n');
         //If new line is not found double the size of buffer and receive data
         if(end_of_line == NULL)
         {
             multiplication_factor<<=1;
-            realloc_buffer = realloc(client_buffer,multiplication_factor*CLIENT_BUFFER_LEN);
+            realloc_buffer = realloc(client_buffer,(multiplication_factor*CLIENT_BUFFER_LEN));
             if(realloc_buffer==NULL)
             {
                 syslog(LOG_INFO, "Client buffer was not allocated hence returning with error");
                 free(client_buffer);
                 return -1;
             }
+            memset(realloc_buffer + start_pos, 0, (multiplication_factor * CLIENT_BUFFER_LEN) - start_pos);
             client_buffer = realloc_buffer;
             bytes_to_receive = (multiplication_factor*CLIENT_BUFFER_LEN)-start_pos;
-            realloc_buffer+=start_pos;
+            realloc_buffer= client_buffer + start_pos;
        
 
         }
@@ -181,7 +183,7 @@ int receive_and_store_socket_data(int client_fd,int file_fd)
     {
         buff_size = end_of_line - client_buffer+1;
         client_buffer[buff_size] = '\0';
-        write(file_fd,client_buffer,strlen(client_buffer));
+        write(file_fd,client_buffer,buff_size);
         fdatasync(file_fd);
     }
 
