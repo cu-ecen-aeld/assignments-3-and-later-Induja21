@@ -134,7 +134,7 @@ int receive_and_store_socket_data(int client_fd, int file_fd) {
     // Dynamically allocate initial buffer
     client_buffer = (char *)calloc(current_size, sizeof(char));
     if (client_buffer == NULL) {
-        syslog(LOG_INFO, "Client buffer allocation failed, returning with error");
+        syslog(LOG_ERR, "Client buffer allocation failed, returning with error");
         return -1;
     }
 
@@ -157,7 +157,7 @@ int receive_and_store_socket_data(int client_fd, int file_fd) {
         size_t new_size = multiplication_factor * CLIENT_BUFFER_LEN;
         char *new_buffer = (char *)realloc(client_buffer, new_size);
         if (new_buffer == NULL) {
-            syslog(LOG_INFO, "Reallocation of client buffer failed, returning with error");
+            syslog(LOG_ERR, "Reallocation of client buffer failed, returning with error");
             free(client_buffer);
             return -1;
         }
@@ -166,8 +166,18 @@ int receive_and_store_socket_data(int client_fd, int file_fd) {
     }
 
     // Now we have the complete data, store it in the file
-    write(file_fd, client_buffer, total_received);
-    fdatasync(file_fd);
+    syslog(LOG_INFO, "Writing received data to the sockedata file");
+    if(write(file_fd, client_buffer, total_received)!=-1)
+    {
+      syslog(LOG_INFO, "Syncing data to the disk");
+      fdatasync(file_fd);
+    }
+    else
+    {
+	syslog(LOG_ERR, "Writing received data to the socketdata file failed");
+	free(client_buffer);
+	return -1;
+    }
 
     free(client_buffer);
     return 0; // Return success
@@ -231,6 +241,7 @@ int main(int argc, char **argv)
     {
          syslog(LOG_ERR, "Error occured while getting the address info: %s \n", gai_strerror(status));
          //Freeing of  the linked-list is not done as no memory is allocated
+         closelog(); //Close syslog
          exit(1);
     }
 
@@ -240,6 +251,7 @@ int main(int argc, char **argv)
     if (socket_fd == -1) {
         syslog(LOG_ERR, "Error occurred while creating a socket: %s\n", strerror(errno));
         freeaddrinfo(server_info); // free the linked-list
+        closelog(); //Close syslog
         exit(1);
     }
     // Set socket options
@@ -249,6 +261,7 @@ int main(int argc, char **argv)
         //Set Socket operation has failed, log the details,
         syslog(LOG_ERR, "Error occured while setting a socket option: %s \n", strerror(errno));
         freeaddrinfo(server_info); // free the linked-list
+        closelog(); //Close syslog
         exit(1);
     } 
 
@@ -257,6 +270,7 @@ int main(int argc, char **argv)
        //Bind operation has failed, log the details,
         syslog(LOG_ERR, "Error occured while binding a socket: %s \n", strerror(errno));
         freeaddrinfo(server_info); // free the linked-list
+        closelog(); //Close syslog
         exit(1); 
     }
 
@@ -267,6 +281,7 @@ int main(int argc, char **argv)
         {
             syslog(LOG_ERR, "Daemon creation failed, hence exiting");
             freeaddrinfo(server_info); // free the linked-list
+            closelog(); //Close syslog
             exit(1); 
         }
     }
@@ -276,6 +291,7 @@ int main(int argc, char **argv)
         //listen operation has failed, log the details,
         syslog(LOG_ERR, "Error occured during listen operation: %s \n", strerror(errno));
         freeaddrinfo(server_info); // free the linked-list
+        closelog(); //Close syslog
         exit(1); 
      }
 
@@ -285,6 +301,7 @@ int main(int argc, char **argv)
     {
         syslog(LOG_ERR, "Open/create of /var/tmp/aesdsocketdata failed");
         freeaddrinfo(server_info); // free the linked-list
+        closelog(); //Close syslog
         exit(1);
     }
     initialize_sigaction();
@@ -325,5 +342,5 @@ int main(int argc, char **argv)
      }
     close(file_fd);
     freeaddrinfo(server_info); // free the linked-list
-    closelog();
+    closelog(); //Close syslog
 }
