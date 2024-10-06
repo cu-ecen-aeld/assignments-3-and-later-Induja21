@@ -125,71 +125,52 @@ void initialize_sigaction()
 
 
 
-int receive_and_store_socket_data(int client_fd,int file_fd)
-{
-    char *client_buffer=NULL,*realloc_buffer=NULL;
-    int received_no_of_bytes=0;
-    size_t start_pos=0;
-    char *end_of_line = NULL;
-    size_t bytes_to_receive = CLIENT_BUFFER_LEN,buff_size=0;
-    size_t multiplication_factor=1;
+int receive_and_store_socket_data(int client_fd, int file_fd) {
+    char *client_buffer = NULL;
+    size_t total_received = 0;
+    size_t current_size = CLIENT_BUFFER_LEN;
+    size_t multiplication_factor = 1;
 
-    //Dynamically allocate 1024 bytes of memory
-    //realloc_buffer = (char *)malloc(CLIENT_BUFFER_LEN+1);
-    realloc_buffer = (char *)calloc(CLIENT_BUFFER_LEN + 1, sizeof(char));
-    if(realloc_buffer == NULL)
-    {
-        syslog(LOG_INFO, "Client buffer was not allocated hence returning with error");
+    // Dynamically allocate initial buffer
+    client_buffer = (char *)calloc(current_size, sizeof(char));
+    if (client_buffer == NULL) {
+        syslog(LOG_INFO, "Client buffer allocation failed, returning with error");
         return -1;
     }
 
-    client_buffer = realloc_buffer;
-
-    while((received_no_of_bytes=recv(client_fd,realloc_buffer,bytes_to_receive,0))>0)
-    {
-        //Update the total byte received
-        start_pos+=received_no_of_bytes;
-        //Check if newline is found
-        end_of_line = strchr(client_buffer,'\n');
-        //If new line is not found double the size of buffer and receive data
-        if(end_of_line == NULL)
-        {
-            multiplication_factor<<=1;
-            realloc_buffer = realloc(client_buffer,(multiplication_factor*CLIENT_BUFFER_LEN));
-            if(realloc_buffer==NULL)
-            {
-                syslog(LOG_INFO, "Client buffer was not allocated hence returning with error");
-                free(client_buffer);
-                return -1;
-            }
-            memset(realloc_buffer + start_pos, 0, (multiplication_factor * CLIENT_BUFFER_LEN) - start_pos);
-            client_buffer = realloc_buffer;
-            bytes_to_receive = (multiplication_factor*CLIENT_BUFFER_LEN)-start_pos;
-            realloc_buffer= client_buffer + start_pos;
-       
-
+    while (true) {
+        // Receive data from client
+        ssize_t received_no_of_bytes = recv(client_fd, client_buffer + total_received, current_size - total_received - 1, 0);
+        if (received_no_of_bytes <= 0) {
+            break; // Connection closed or error
         }
-        else
-        {
-            break;
+        total_received += received_no_of_bytes;
+        client_buffer[total_received] = '\0'; // Null-terminate the string
+
+        // Check for newline
+        if (strchr(client_buffer, '\n') != NULL) {
+            break; // Newline found, exit the loop
         }
 
+        // If we reach this point, we need to resize the buffer
+        multiplication_factor <<= 1;
+        size_t new_size = multiplication_factor * CLIENT_BUFFER_LEN;
+        char *new_buffer = (char *)realloc(client_buffer, new_size);
+        if (new_buffer == NULL) {
+            syslog(LOG_INFO, "Reallocation of client buffer failed, returning with error");
+            free(client_buffer);
+            return -1;
+        }
+        client_buffer = new_buffer;
+        current_size = new_size;
     }
-    //Print clientbuffer
 
-
-    //Store the buffer in the sockedata file
-    if(end_of_line != NULL)
-    {
-        buff_size = end_of_line - client_buffer+1;
-        client_buffer[buff_size] = '\0';
-        write(file_fd,client_buffer,buff_size);
-        fdatasync(file_fd);
-    }
-
+    // Now we have the complete data, store it in the file
+    write(file_fd, client_buffer, total_received);
+    fdatasync(file_fd);
 
     free(client_buffer);
-    return 0;  // Return success
+    return 0; // Return success
 }
 
 
