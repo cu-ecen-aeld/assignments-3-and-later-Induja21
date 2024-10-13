@@ -13,7 +13,7 @@ fi
 case "$1" in
     start)
         echo "Starting aesdsocketserver"
-        start-stop-daemon -S -n aesdsocket -a /usr/bin/aesdsocket
+        start-stop-daemon -S -n aesdsocket -a /usr/bin/aesdsocket -- -d
         if [ $? -eq 0 ]; then
             echo "aesdsocketserver started successfully."
         else
@@ -23,7 +23,7 @@ case "$1" in
         ;;
     stop)
         echo "Stopping aesdsocketserver"
-        start-stop-daemon -K -n aesdsocketserver
+        start-stop-daemon -K -n aesdsocket
         if [ $? -eq 0 ]; then
             echo "aesdsocketserver stopped successfully."
         else
@@ -32,7 +32,6 @@ case "$1" in
         fi
         ;;
     *)
-        echo "usage: $0 {start|stop}"
-        exit 1
+
 esac
 exit 0
