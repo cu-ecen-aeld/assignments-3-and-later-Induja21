@@ -87,7 +87,7 @@ void wait_for_all_threads_to_join()
         }
         current_thread_node = next_thread_node;
     }
-
+  
     pthread_mutex_unlock(&thread_list_mutex);
 }
 
@@ -103,14 +103,33 @@ void *timestamp_appender(void* args)
         sleep(10);
         // Extract timestamp
         current_time = time(NULL);
+
         tm_info = localtime(&current_time);
+        if(tm_info==NULL)
+        {
+            syslog(LOG_ERR,"Unable to get local time");
+        }
 
         //Format the string to RFC 2822
-        strftime(timestamp, sizeof(timestamp), "timestamp:%Y-%m-%d %H:%M:%S\n", tm_info);
+        if(strftime(timestamp, sizeof(timestamp), "timestamp:%Y-%m-%d %H:%M:%S\n", tm_info)==0)
+        {
+            syslog(LOG_ERR,"strftime failed");
+            continue;
+        }
         syslog(LOG_INFO,"10s has elapsed saving the time in socketdata file,time is %s",timestamp);
         //Save the timestamp to socketdata file
         pthread_mutex_lock(&file_mutex);
-        write(((ThreadArgs *)args)->file_fd, timestamp, strlen(timestamp));
+        if(write(((ThreadArgs *)args)->file_fd, timestamp, strlen(timestamp))==-1)
+        {
+            syslog(LOG_INFO,"Timestamp write has failed");
+            pthread_mutex_unlock(&file_mutex);
+            continue;
+        }
+        else
+        {
+            syslog(LOG_INFO, "Syncing data to the disk");
+            fdatasync(((ThreadArgs *)args)->file_fd);
+        }
         pthread_mutex_unlock(&file_mutex);
 
     }
@@ -286,6 +305,7 @@ int receive_and_store_socket_data(int client_fd, int file_fd)
     }
     // UnLock the mutex after writing to the file
     pthread_mutex_unlock(&file_mutex);
+    syslog(LOG_INFO, "Unlocked mutex and returning from write");
     free(client_buffer);
     return 0; // Return success
 }
@@ -302,11 +322,13 @@ int return_socketdata_to_client(int client_fd, int file_fd)
         return -1;
     }
 
+
     // Lock the mutex while reading from the file
     pthread_mutex_lock(&file_mutex);
     // Read and send data
     while ((bytes_read = read(file_fd, send_buffer, sizeof(send_buffer) - 1)) > 0)
     {
+       
         send_buffer[bytes_read] = '\0';
         // Send to client
         if (send(client_fd, send_buffer, bytes_read, 0) == -1)
@@ -317,6 +339,7 @@ int return_socketdata_to_client(int client_fd, int file_fd)
     }
     //Unlock the mutex after reading from file
     pthread_mutex_unlock(&file_mutex); 
+    syslog(LOG_INFO, "Unlocked the mutex and returning from send routine");
     free(send_buffer);
     return 0;
 }
@@ -345,6 +368,7 @@ void *thread_function(void *args)
     if (receive_and_store_socket_data(threadArgs->client_fd, threadArgs->file_fd) == 0)
     {
         // Send back the stored data of file back to the client
+        syslog(LOG_INFO, "Sending back the received data to client");
         return_socketdata_to_client(threadArgs->client_fd, threadArgs->file_fd);
     }
     if (close(threadArgs->client_fd) == 0)
@@ -356,7 +380,7 @@ void *thread_function(void *args)
         syslog(LOG_ERR, "Closing of connection from %s failed", client_ip);
     }
     // Exit from the thread
-    pthread_exit(NULL);
+   return 0;
 }
 
 int main(int argc, char **argv)
@@ -496,6 +520,7 @@ int main(int argc, char **argv)
         args->client_fd = client_fd;
         args->file_fd = file_fd;
         args->socket_addr = client_addr;
+        syslog(LOG_INFO, "Creating a new thread");
         int err = pthread_create(&threadId, NULL, thread_function, (void *)args);
         if (err != 0)
         {
@@ -504,7 +529,10 @@ int main(int argc, char **argv)
             free(args); // Free allocated memory
             continue;   // Handle the error
         }
+        add_thread_node(threadId);
+        wait_for_all_threads_to_join();
     }
+    syslog(LOG_ERR, "Waiting for active threads to join");
     // Wait for active threads to finish
     wait_for_all_threads_to_join();
     close(file_fd);
