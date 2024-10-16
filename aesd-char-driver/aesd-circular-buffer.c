@@ -12,6 +12,7 @@
 #include <linux/string.h>
 #else
 #include <string.h>
+#include <stdio.h>
 #endif
 
 #include "aesd-circular-buffer.h"
@@ -32,6 +33,27 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
     /**
     * TODO: implement per description
     */
+   // First check the out_offs buffer entry and check the length of buffer. 
+   // 1) If length is < actual offset move to next buffer and reduce the length -= strlen(buffer); Go to next circular before pos
+   // else 2) retrun len -1 ;(which will be the pos of corresponding buffer)
+   // 
+    int lengthOfString = 0;
+    int total_entries_visisted = 0;
+    char_offset+=1;
+    for(int seek_off=buffer->out_offs;total_entries_visisted<AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;total_entries_visisted++,seek_off=(seek_off+1)%AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED)
+    {
+         lengthOfString =  strlen(buffer->entry[seek_off].buffptr);
+        if(lengthOfString<char_offset)
+        {
+            char_offset-=lengthOfString;
+        }
+        else
+        {
+            *entry_offset_byte_rtn = (char_offset-1);
+            return &buffer->entry[seek_off];
+        }
+    }
+    *entry_offset_byte_rtn = (size_t)NULL;
     return NULL;
 }
 
@@ -47,6 +69,18 @@ void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const s
     /**
     * TODO: implement per description
     */
+   buffer->entry[buffer->in_offs] = *add_entry;
+    if(buffer->in_offs==buffer->out_offs)
+   {
+    buffer->full=true;
+    
+   }
+    if(buffer->full)
+   {
+    buffer->out_offs = (buffer->out_offs+1)%AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+   }
+     buffer->in_offs = (buffer->in_offs+1)%AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+
 }
 
 /**
