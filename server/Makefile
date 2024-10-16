@@ -3,25 +3,22 @@
 # Author: Induja Narayanan <Induja.Narayanan@colorado.edu>
 
 #If CROSS_COMPILE is defined only as aarch64-none-linux-gnu- do cross compilation else do native compilation
-ifdef CROSS_COMPILE
-ifeq ($(CROSS_COMPILE),aarch64-none-linux-gnu-)
-CC = $(CROSS_COMPILE)gcc
-else
-CC = gcc
-endif
-endif
+
+CC ?= $(CROSS_COMPILE)gcc
 
 #Target executable aesdsocket utility
-TARGET=aesdsocket
+TARGET?=aesdsocket
 
 OBJS = $(SRC:.c=.o)
 SRC  = aesdsocket.c
-CFLAGS = -Werror -Wall -Wunused -Wunused-variable -Wextra
+CFLAGS ?= -Werror -Wall -Wunused -Wunused-variable -Wextra
+LDFLAGS ?= -lpthread -lrt
 
 all:$(TARGET)
 
 $(TARGET): $(OBJS)
-	$(CC) $(CFLAGS) -o $(TARGET) $(OBJS)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(INCLUDES) -o $(TARGET) $(OBJS) 
+#$(CC) $(CFLAGS) $^-o $@ $(INCLUDES) $(LDFLAGS)
 
 %.o: %.c
 	$(CC) -c $< -o $@
