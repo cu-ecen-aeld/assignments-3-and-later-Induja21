@@ -34,10 +34,7 @@ struct aesd_dev
      */
     struct cdev cdev;     /* Char device structure      */
     struct aesd_circular_buffer buffer;   /* Circular buffer to store commands */
-     struct {
-          char *buffptr;               /* Pointer to the current buffer */
-          size_t size;                 /* Size of the buffer */
-     } temp;                          /* Temporary storage for unterminated commands */
+     struct aesd_buffer_entry new_entry;
     struct mutex lock;                    /* Mutex for synchronized access */
 };
 

@@ -46,59 +46,58 @@ int aesd_release(struct inode *inode, struct file *filp)
     return 0;
 }
 
-ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
-                loff_t *f_pos)
-{
+ssize_t aesd_read(struct file *filp, char __user *buf, size_t count, loff_t *f_pos) {
     ssize_t retval = 0;
-    PDEBUG("read %zu bytes with offset %lld",count,*f_pos);
-    /**
-     * TODO: handle read
-     */
-    if (filp == NULL || buf == NULL || f_pos == NULL || *f_pos < 0)
-    {
+    PDEBUG("read %zu bytes with offset %lld", count, *f_pos);
+    
+    // Validate input
+    if (!filp || !buf || !f_pos || *f_pos < 0) {
         PDEBUG("Improper arguments");
-        goto exit;
+        return -EINVAL;
     }
-    struct aesd_dev *dev_buffer = filp->private_data; // Pointer to dev_buffer
-    size_t offset=0;
-    size_t remaining_bytes=0;
-    // Locking to ensure safe access to shared resources
-    retval = mutex_lock_interruptible(&dev_buffer->lock);
-    if (retval != 0)
-    {
-        retval = -ERESTART;
-        goto free_mutex;
-    }
-    struct aesd_buffer_entry *temp = aesd_circular_buffer_find_entry_offset_for_fpos(&dev_buffer->buffer, *f_pos, &offset);
 
-    if (temp == NULL)
-    {
+    struct aesd_dev *dev_buffer = filp->private_data;
+    size_t offset = 0;
+    size_t remaining_bytes = 0;
+
+    // Lock
+    retval = mutex_lock_interruptible(&dev_buffer->lock);
+    if (retval != 0) {
+        return -ERESTART;
+    }
+
+    struct aesd_buffer_entry *temp = aesd_circular_buffer_find_entry_offset_for_fpos(&dev_buffer->buffer, *f_pos, &offset);
+    if (!temp) {
         PDEBUG("Error: Entry for given position not found");
         retval = -EINVAL;
-        goto free_mutex;
+        goto unlock;
     }
 
-    remaining_bytes = temp->size-offset;
-    retval = copy_to_user(buf,temp->buffptr,remaining_bytes);
-    if(retval!=0)
-    {
-        //Copy to user buffer failed hence 
+    remaining_bytes = temp->size - offset;
+    if (remaining_bytes > count) {
+        remaining_bytes = count; // Prevent overflow
+    }
+
+    retval = copy_to_user(buf, temp->buffptr + offset, remaining_bytes);
+    if (retval != 0) {
+        remaining_bytes -= retval; // Adjust remaining bytes
         PDEBUG("Copying data to user space failed");
-        retval = -EINVAL;
-        goto free_mutex;
+        retval = -EFAULT;
+        goto unlock;
     }
-    *f_pos +=remaining_bytes;
 
-free_mutex:
-    mutex_unlock(&dev_buffer->lock); // Unlock the mutex
+    *f_pos += remaining_bytes; // Update position
+    retval = remaining_bytes; // Successfully read this many bytes
+
+unlock:
+    mutex_unlock(&dev_buffer->lock);
     PDEBUG("Mutex unlocked");
-exit:
-    return retval; // Return the result
+    return retval;
 }
-
 ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos)
 {
-    struct aesd_buffer_entry *mem_ptr = NULL, *newline_ptr = NULL;
+    char *mem_ptr = NULL;
+    char *newline_ptr = NULL;
     size_t size_to_fill_in_buffer = 0, new_size = 0;
     ssize_t retval = -ENOMEM;
     struct aesd_dev *dev_buffer = filp->private_data; // Pointer to dev_buffer
@@ -128,13 +127,18 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
         retval = -EFAULT;
         goto free_and_exit;
     }
-
+    PDEBUG("String copied is:");
+    for(int i=0;i<count;i++)
+    {
+         PDEBUG("%c",mem_ptr[i]);
+    }
     // Check for newline character in the buffer
     newline_ptr = memchr(mem_ptr, '\n', count);
     if (newline_ptr != NULL)
     {
         // Newline character found
         size_to_fill_in_buffer = newline_ptr - mem_ptr + 1;
+         PDEBUG("Size to fill in buffer is %ld",size_to_fill_in_buffer);
     }
 
     // Locking to ensure safe access to shared resources
@@ -142,33 +146,38 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
     if (retval != 0)
     {
         retval = -ERESTART;
+        PDEBUG("Unable to acquire lock\n");
         goto free_and_exit;
     }
 
     if (size_to_fill_in_buffer > 0)
     {
+        dev_buffer->new_entry.buffptr = mem_ptr;
+        dev_buffer->new_entry.size = size_to_fill_in_buffer;
         // If a newline was found, add the pointer to circular buffer
-        struct aesd_buffer_entry *entry = aesd_circular_buffer_add_entry(&dev_buffer->buffer, mem_ptr);
-        
+        struct aesd_buffer_entry *entry = aesd_circular_buffer_add_entry(&dev_buffer->buffer, &dev_buffer->new_entry);
+
         // Free entry
         if (entry != NULL) {
+            PDEBUG("Freeing entry\n");
             kfree(entry); // Free old entry if necessary
         }
 
+        PDEBUG("Resetting buffptr\n");
+
         // Reset temp buffer after successfully processing the command
-        kfree(dev_buffer->temp.buffptr); // Free any existing memory
-        dev_buffer->temp.buffptr = NULL;  // Reset pointer
-        dev_buffer->temp.size = 0;         // Reset size
+        dev_buffer->new_entry.buffptr = NULL;  // Reset pointer
+        dev_buffer->new_entry.size = 0;         // Reset size
 
         retval = size_to_fill_in_buffer; // Number of bytes written
     }
     else
     {
         // No newline character found, buffer the data for future writes
-        new_size = dev_buffer->temp.size + count; // New size for temp buffer
+        new_size = dev_buffer->new_entry.size + count; // New size for temp buffer
 
         // Reallocate memory for the temporary buffer
-        char *temp_realloc_ptr = krealloc(dev_buffer->temp.buffptr, new_size, GFP_KERNEL);
+        char *temp_realloc_ptr = krealloc(dev_buffer->new_entry.buffptr, new_size, GFP_KERNEL);
         if (temp_realloc_ptr == NULL)
         {
             PDEBUG("Realloc failed during write.");
@@ -176,18 +185,19 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
             goto free_mutex; // Free mutex before exiting
         }
 
-        dev_buffer->temp.buffptr = temp_realloc_ptr; // Update pointer to new memory
-        memcpy(dev_buffer->temp.buffptr + dev_buffer->temp.size, mem_ptr, count); // Copy new data to the end of the buffer
-        dev_buffer->temp.size += count; // Update the size of the temporary buffer
+        dev_buffer->new_entry.buffptr = temp_realloc_ptr; // Update pointer to new memory
+        memcpy(dev_buffer->new_entry.buffptr + dev_buffer->new_entry.size, mem_ptr, count); // Copy new data to the end of the buffer
+        dev_buffer->new_entry.size += count; // Update the size of the temporary buffer
 
-        PDEBUG("Buffered %zu bytes; total size now %zu", count, dev_buffer->temp.size);
+        PDEBUG("Buffered %zu bytes; total size now %zu", count, dev_buffer->new_entry.size);
         retval = count; // Return the number of bytes written
     }
 
-free_and_exit:
-    kfree(mem_ptr); // Free the allocated memory for incoming data
+
 free_mutex:
     mutex_unlock(&dev_buffer->lock); // Unlock the mutex
+free_and_exit:
+    kfree(mem_ptr); // Free the allocated memory for incoming data
 exit:
     return retval; // Return the result
 }
@@ -251,10 +261,15 @@ void aesd_cleanup_module(void)
     dev_t devno = MKDEV(aesd_major, aesd_minor);
 
     cdev_del(&aesd_device.cdev);
+    struct aesd_buffer_entry *entry;
+    uint8_t index = 0;
+    AESD_CIRCULAR_BUFFER_FOREACH(entry, &aesd_device.buffer, index){
+    if(entry->buffptr != NULL){
+        kfree(entry->buffptr);
+    }
+    }
 
-    /**
-     * TODO: cleanup AESD specific poritions here as necessary
-     */
+    mutex_destroy(&aesd_device.lock);
 
     unregister_chrdev_region(devno, 1);
 }
