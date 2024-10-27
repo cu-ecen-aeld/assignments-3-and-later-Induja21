@@ -10,27 +10,13 @@
 
 #ifdef __KERNEL__
 #include <linux/string.h>
-#include <linux/printk.h>
 #else
 #include <string.h>
 #include <stdio.h>
 #endif
 
 #include "aesd-circular-buffer.h"
-#define AESD_DEBUG 1  //Remove comment on this line to enable debug
 
-#undef PDEBUG             /* undef it, just in case */
-#ifdef AESD_DEBUG
-#  ifdef __KERNEL__
-     /* This one if debugging is on, and kernel space */
-#    define PDEBUG(fmt, args...) printk( KERN_DEBUG "aesdcharbuffer: " fmt, ## args)
-#  else
-     /* This one for user space */
-#    define PDEBUG(fmt, args...) fprintf(stderr, fmt, ## args)
-#  endif
-#else
-#  define PDEBUG(fmt, args...) /* not debugging: nothing */
-#endif
 /**
  * @param buffer the buffer to search for corresponding offset.  Any necessary locking must be performed by caller.
  * @param char_offset the position to search for in the buffer list, describing the zero referenced
@@ -54,7 +40,6 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(
         return NULL;
     }
 
-    size_t sum_size = 0; // To accumulate the sizes of entries
     int total_entries_visited = 0; // To track the number of entries visited
 
     // Start looking for the specified character offset in the buffer
@@ -98,12 +83,7 @@ const char* aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, 
     }
 
     // Place new entry at the current in_offs position
-    buffer->entry[buffer->in_offs] = *add_entry;
-    PDEBUG("Buffer entry contentc after copying:");
-    for(int i=0;i<buffer->entry[buffer->in_offs].size;i++)
-    {
-        PDEBUG("%c",buffer->entry[buffer->in_offs].buffptr[i]);
-    }
+   
     // If buffer is full, prepare to return the oldest entry (currently at out_offs)
     if (buffer->full) {
         retval = buffer->entry[buffer->out_offs].buffptr;
@@ -111,14 +91,14 @@ const char* aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, 
     }
 
     // Advance in_offs and check if we've filled up the buffer
+     buffer->entry[buffer->in_offs] = *add_entry;
     buffer->in_offs = (buffer->in_offs + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
 
     // If in_offs catches up with out_offs, the buffer is now full
-    if (buffer->in_offs == buffer->out_offs) {
+    if (buffer->in_offs == buffer->out_offs && buffer->full == false ) 
+    {
         buffer->full = true;
-    } else {
-        buffer->full = false;  // Reset full flag if there's still free space
-    }
+    } 
 
     return retval;
 }
@@ -128,6 +108,5 @@ const char* aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, 
 */
 void aesd_circular_buffer_init(struct aesd_circular_buffer *buffer)
 {
-    printk("Init successful\n");
     memset(buffer,0,sizeof(struct aesd_circular_buffer));
 }
