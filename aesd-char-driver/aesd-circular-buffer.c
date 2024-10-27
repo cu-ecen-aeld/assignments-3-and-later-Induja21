@@ -10,6 +10,7 @@
 
 #ifdef __KERNEL__
 #include <linux/string.h>
+#include <linux/printk.h>
 #else
 #include <string.h>
 #include <stdio.h>
@@ -37,15 +38,16 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
    // 1) If length is < actual offset move to next buffer and reduce the length -= strlen(buffer); Go to next circular before pos
    // else 2) retrun len -1 ;(which will be the pos of corresponding buffer)
    // 
-    int lengthOfString = 0;
+    //int lengthOfString = 0;
     int total_entries_visisted = 0;
     char_offset+=1;
     for(int seek_off=buffer->out_offs;total_entries_visisted<AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;total_entries_visisted++,seek_off=(seek_off+1)%AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED)
     {
-         lengthOfString =  strlen(buffer->entry[seek_off].buffptr);
-        if(lengthOfString<char_offset)
+        // lengthOfString =  strlen(buffer->entry[seek_off].buffptr);
+         printk("Buffer contents size is %ld\n",buffer->entry[seek_off].size);
+        if(buffer->entry[seek_off].size<char_offset)
         {
-            char_offset-=lengthOfString;
+            char_offset-=buffer->entry[seek_off].size;
         }
         else
         {
@@ -94,5 +96,6 @@ struct aesd_buffer_entry * aesd_circular_buffer_add_entry(struct aesd_circular_b
 */
 void aesd_circular_buffer_init(struct aesd_circular_buffer *buffer)
 {
+    printk("Init successful\n");
     memset(buffer,0,sizeof(struct aesd_circular_buffer));
 }

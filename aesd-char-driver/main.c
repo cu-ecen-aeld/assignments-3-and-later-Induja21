@@ -222,13 +222,14 @@ int aesd_init_module(void)
     int result;
     result = alloc_chrdev_region(&dev, aesd_minor, 1,
             "aesdchar");
+
     aesd_major = MAJOR(dev);
     if (result < 0) {
         printk(KERN_WARNING "Can't get major %d\n", aesd_major);
         return result;
     }
     memset(&aesd_device,0,sizeof(struct aesd_dev));
-
+    printk(KERN_INFO, "AESD Init module");
     /**
      * TODO: initialize the AESD specific portion of the device
      */
