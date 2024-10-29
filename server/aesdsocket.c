@@ -25,8 +25,14 @@
 #include <time.h>
 
 #pragma GCC diagnostic warning "-Wunused-variable"
+#define USE_AESD_CHAR_DEVICE 1
 
+#if USE_AESD_CHAR_DEVICE
+#define SOCKETDATA_FILE "/dev/aesdchar"
+#else
 #define SOCKETDATA_FILE "/var/tmp/aesdsocketdata"
+#endif
+
 #define CLIENT_BUFFER_LEN 1024
 FILE *tmp_file = NULL;
 bool exit_main_loop = false;
@@ -90,7 +96,7 @@ void wait_for_all_threads_to_join()
   
     pthread_mutex_unlock(&thread_list_mutex);
 }
-
+#if !USE_AESD_CHAR_DEVICE
 void *timestamp_appender(void* args)
 {
     time_t current_time;
@@ -135,7 +141,7 @@ void *timestamp_appender(void* args)
     }
 
 }
-
+#endif
 bool create_daemon()
 {
     pid_t pid;
@@ -389,9 +395,9 @@ int main(int argc, char **argv)
     int socket_fd, client_fd;
     struct sockaddr_storage client_addr;
     socklen_t client_addr_size;
-    int file_fd, status;
+    int file_fd = -1;
+    int status;
     int yes = 1;
-
     bool daemon_mode = false;
 
     // Check if the application to be run in daemon mode
@@ -412,9 +418,8 @@ int main(int argc, char **argv)
     // Get address info
     if ((status = getaddrinfo(NULL, "9000", &inputs, &server_info)) != 0)
     {
-        syslog(LOG_ERR, "Error occured while getting the address info: %s \n", gai_strerror(status));
-        // Freeing of  the linked-list is not done as no memory is allocated
-        closelog(); // Close syslog
+        syslog(LOG_ERR, "Error occurred while getting the address info: %s \n", gai_strerror(status));
+        closelog();
         exit(1);
     }
 
@@ -423,89 +428,87 @@ int main(int argc, char **argv)
     if (socket_fd == -1)
     {
         syslog(LOG_ERR, "Error occurred while creating a socket: %s\n", strerror(errno));
-        freeaddrinfo(server_info); // free the linked-list
-        closelog();                // Close syslog
+        freeaddrinfo(server_info);
+        closelog();
         exit(1);
     }
-    // Set socket options
 
-    if (setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof yes) == -1)
+    // Set socket options
+    if (setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1)
     {
-        // Set Socket operation has failed, log the details,
-        syslog(LOG_ERR, "Error occured while setting a socket option: %s \n", strerror(errno));
-        freeaddrinfo(server_info); // free the linked-list
-        closelog();                // Close syslog
+        syslog(LOG_ERR, "Error occurred while setting a socket option: %s \n", strerror(errno));
+        freeaddrinfo(server_info);
+        closelog();
         exit(1);
     }
 
     if (bind(socket_fd, server_info->ai_addr, server_info->ai_addrlen) == -1)
     {
-        // Bind operation has failed, log the details,
-        syslog(LOG_ERR, "Error occured while binding a socket: %s \n", strerror(errno));
-        freeaddrinfo(server_info); // free the linked-list
-        closelog();                // Close syslog
+        syslog(LOG_ERR, "Error occurred while binding a socket: %s \n", strerror(errno));
+        freeaddrinfo(server_info);
+        closelog();
         exit(1);
     }
 
-    // Check if daemon to be created
+    // Check if daemon needs to be created
     if (daemon_mode)
     {
         if (!create_daemon())
         {
             syslog(LOG_ERR, "Daemon creation failed, hence exiting");
-            freeaddrinfo(server_info); // free the linked-list
-            closelog();                // Close syslog
+            freeaddrinfo(server_info);
+            closelog();
             exit(1);
         }
     }
 
     if (listen(socket_fd, 20) == -1)
     {
-        // listen operation has failed, log the details,
-        syslog(LOG_ERR, "Error occured during listen operation: %s \n", strerror(errno));
-        freeaddrinfo(server_info); // free the linked-list
-        closelog();                // Close syslog
+        syslog(LOG_ERR, "Error occurred during listen operation: %s \n", strerror(errno));
+        freeaddrinfo(server_info);
+        closelog();
         exit(1);
     }
 
-    file_fd = open(SOCKETDATA_FILE, O_RDWR | O_CREAT | O_TRUNC, 0666);
-    if (file_fd == -1)
-    {
-        syslog(LOG_ERR, "Open/create of /var/tmp/aesdsocketdata failed");
-        freeaddrinfo(server_info); // free the linked-list
-        closelog();                // Close syslog
-        exit(1);
-    }
     initialize_sigaction();
-    client_addr_size = sizeof(client_addr); // Initialize client address size
+    client_addr_size = sizeof(client_addr);
 
-    //Create timer thread
-        pthread_t TimerthreadId;
-        ThreadArgs *timerargs = malloc(sizeof(ThreadArgs));
-        if (timerargs == NULL)
+    // Conditionally create a timer thread only if timestamping is enabled (i.e., when not using aesdchar)
+#if !USE_AESD_CHAR_DEVICE
+    pthread_t TimerthreadId;
+    ThreadArgs *timerargs = malloc(sizeof(ThreadArgs));
+    if (timerargs == NULL)
+    {
+        syslog(LOG_ERR, "Failed to allocate memory for thread arguments");
+    }
+    else
+    {
+        // Open the file for writing data and timestamps
+        file_fd = open(SOCKETDATA_FILE, O_RDWR | O_CREAT | O_TRUNC, 0666);
+        if (file_fd == -1)
         {
-            syslog(LOG_ERR, "Failed to allocate memory for thread arguments");
+            syslog(LOG_ERR, "Open/create of %s failed", SOCKETDATA_FILE);
+            freeaddrinfo(server_info);
+            closelog();
+            exit(1);
         }
-        else
+        timerargs->file_fd = file_fd;
+        int err = pthread_create(&TimerthreadId, NULL, timestamp_appender, (void *)timerargs);
+        if (err != 0)
         {
-            timerargs->file_fd = file_fd;
-            int err = pthread_create(&TimerthreadId, NULL, timestamp_appender, (void *)timerargs);
-            if (err != 0)
-            {
-                syslog(LOG_ERR, "Error creating timer thread: %s", strerror(err));
-                free(timerargs); // Free allocated memory
-            }
-
+            syslog(LOG_ERR, "Error creating timer thread: %s", strerror(err));
+            free(timerargs);
         }
+    }
+#endif
 
-
+    // Main server loop
     while (!exit_main_loop)
     {
         client_fd = accept(socket_fd, (struct sockaddr *)&client_addr, &client_addr_size);
         if (client_fd == -1)
         {
-            // accept operation has failed, log the details and continue for next connection
-            syslog(LOG_ERR, "Error occured during accept operation: %s \n", strerror(errno));
+            syslog(LOG_ERR, "Error occurred during accept operation: %s \n", strerror(errno));
             continue;
         }
 
@@ -515,27 +518,46 @@ int main(int argc, char **argv)
         {
             syslog(LOG_ERR, "Failed to allocate memory for thread arguments");
             close(client_fd);
-            continue; // Handle the error
+            continue;
         }
+
         args->client_fd = client_fd;
-        args->file_fd = file_fd;
         args->socket_addr = client_addr;
+
+#if USE_AESD_CHAR_DEVICE
+        // Open file descriptor for /dev/aesdchar only when a client connects
+        args->file_fd = open(SOCKETDATA_FILE, O_RDWR);
+        if (args->file_fd == -1)
+        {
+            syslog(LOG_ERR, "Failed to open %s", SOCKETDATA_FILE);
+            close(client_fd);
+            free(args);
+            continue;
+        }
+#else
+        // Use already opened file descriptor
+        args->file_fd = file_fd;
+#endif
+
         syslog(LOG_INFO, "Creating a new thread");
         int err = pthread_create(&threadId, NULL, thread_function, (void *)args);
         if (err != 0)
         {
             syslog(LOG_ERR, "Error creating thread: %s", strerror(err));
             close(client_fd);
-            free(args); // Free allocated memory
-            continue;   // Handle the error
+            free(args);
+            continue;
         }
+
         add_thread_node(threadId);
         wait_for_all_threads_to_join();
     }
+
+    // Clean up before exiting
     syslog(LOG_ERR, "Waiting for active threads to join");
-    // Wait for active threads to finish
     wait_for_all_threads_to_join();
+
     close(file_fd);
-    freeaddrinfo(server_info); // free the linked-list
-    closelog();                // Close syslog
+    freeaddrinfo(server_info);
+    closelog();
 }
