@@ -23,6 +23,8 @@
 #include <pthread.h>
 #include <sys/queue.h>
 #include <time.h>
+#include <sys/ioctl.h>
+#include "../aesd-char-driver/aesd_ioctl.h" 
 
 #pragma GCC diagnostic warning "-Wunused-variable"
 #define USE_AESD_CHAR_DEVICE 1
@@ -253,6 +255,7 @@ int receive_and_store_socket_data(int client_fd, int file_fd)
     size_t total_received = 0;
     size_t current_size = CLIENT_BUFFER_LEN;
     size_t multiplication_factor = 1;
+    struct aesd_seekto seek_to; // Struct for AESDCHAR_IOCSEEKTO
 
     // Dynamically allocate initial buffer
     client_buffer = (char *)calloc(current_size, sizeof(char));
@@ -292,7 +295,32 @@ int receive_and_store_socket_data(int client_fd, int file_fd)
         client_buffer = new_buffer;
         current_size = new_size;
     }
+    // Check if the buffer contains an ioctl command
+    if (strncmp(client_buffer, "AESDCHAR_IOCSEEKTO:", 19) == 0)
+    {
+        // Extract command and offset from the received data
+        if (sscanf(client_buffer + 19, "%u,%u", &seek_to.write_cmd, &seek_to.write_cmd_offset) == 2)
+        {
+            syslog(LOG_INFO, "Parsed ioctl command AESDCHAR_IOCSEEKTO with command %u, offset %u", seek_to.write_cmd, seek_to.write_cmd_offset);
 
+            // Perform the ioctl operation
+            if (ioctl(file_fd, AESDCHAR_IOCSEEKTO, &seek_to) == -1)
+            {
+                syslog(LOG_ERR, "ioctl AESDCHAR_IOCSEEKTO failed: %s", strerror(errno));
+                free(client_buffer);
+                return -1;
+            }
+            syslog(LOG_INFO, "Seek operation successful");
+
+            // Since this was an ioctl command, skip writing to the file
+            free(client_buffer);
+            return 0;
+        }
+        else
+        {
+            syslog(LOG_ERR, "Failed to parse AESDCHAR_IOCSEEKTO command and offset");
+        }
+    }
     // Now we have the complete data, store it in the file
     syslog(LOG_INFO, "Writing received data to the sockedata file");
     // Lock the mutex before writing to the file
@@ -336,6 +364,7 @@ int return_socketdata_to_client(int client_fd, int file_fd)
     {
        
         send_buffer[bytes_read] = '\0';
+        syslog(LOG_ERR, "Send to client is: %s", send_buffer);
         // Send to client
         if (send(client_fd, send_buffer, bytes_read, 0) == -1)
         {
@@ -558,6 +587,10 @@ int main(int argc, char **argv)
     wait_for_all_threads_to_join();
 
     close(file_fd);
+    // Remove the temporary file if it exists
+    unlink(SOCKETDATA_FILE);
+
+    syslog(LOG_INFO, "Deleted the temporary socket data file before exiting.");
     freeaddrinfo(server_info);
     closelog();
 }
